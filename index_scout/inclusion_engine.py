@@ -25,7 +25,7 @@ def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDe
 
 def has_index_inclusion_edge(st: IndexCandidateFinancials | None, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False) -> bool:
     if not st or TOXIC_FILING_REGEX.search(raw_text) or ed.is_toxic_or_restatement: return False
-    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6)})
+    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6), "addv_20d_usd": min(st.addv_20d_usd, 19.9e6)})
     return evaluate_index_inclusion(st_neutral, ed, raw_text, vacancy_active=vacancy_active) is not None
 
 def build_quant_bridge(st: IndexCandidateFinancials, ed: EarningsReleaseDelta) -> dict:
