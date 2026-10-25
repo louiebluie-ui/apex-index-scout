@@ -16,5 +16,5 @@ class IndexCandidateFinancials(BaseModel):
 
 class EarningsReleaseDelta(BaseModel):
     form_type: str; file_date: str = ""; q0_gaap_ni_usd: float = 0.0; q0_operating_cf_usd: float = 0.0
-    has_discontinued_ops_loss: bool = False; is_merger_closing_vacancy: bool = False
+    has_discontinued_ops_loss: bool = False; is_merger_closing_vacancy: bool = False; insider_cluster_usd: float = 0.0; insider_buyers_count: int = 0
     is_toxic_or_restatement: bool = False; catalyst_summary: str = ""

@@ -84,3 +84,7 @@ def test_11_two_letter_tickers_and_multi_entity_redaction():
 def test_12_quant_bridge_export_matches_apex_quant_engine_schema():
     qb = build_quant_bridge(_base_ic(addv_20d_usd=28e6), EarningsReleaseDelta(form_type="8-K", file_date="2026-10-23"))
     assert qb["graduated"] is True and qb["pf_fcf_usd"] == 135_000_000.0 and qb["pf_net_debt_usd"] == 60_000_000.0
+
+def test_13_standalone_section16b_csuite_cluster_passes_off_season():
+    r = evaluate_index_inclusion(_base_ic(prior_3q_gaap_ni_usd=50e6, prior_4q_gaap_ni_usd=60e6), EarningsReleaseDelta(form_type="FORM-4", insider_cluster_usd=320_000.0, insider_buyers_count=2), "Form 4 P-Purchase")
+    assert r is not None and r["track"] == "SECTION_16B_CLUSTER"
