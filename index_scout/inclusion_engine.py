@@ -2,7 +2,7 @@ from index_scout.contracts import IndexCandidateFinancials, EarningsReleaseDelta
 
 def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False, equity: float = 94596.0) -> dict | None:
     if TOXIC_FILING_REGEX.search(raw_text) or ed.is_toxic_or_restatement or ed.has_discontinued_ops_loss: return None
-    if not (1.0e9 <= st.market_cap_usd <= 20.5e9 and st.iwf_float_pct >= 50.0 and st.falr_ratio >= 0.75 and st.live_price >= 10.0 and st.addv_20d_usd >= 4.0e6 and st.bars_count >= 60): return None
+    if not (1.0e9 <= st.market_cap_usd <= 20.5e9 and st.iwf_float_pct >= 50.0 and st.falr_ratio >= 0.75 and st.live_price >= 10.0 and 4.0e6 <= st.addv_20d_usd < 20.0e6 and st.bars_count >= 60): return None
     if st.live_price < st.avwap_event or st.intraday_ofi < 0.15: return None
     q0_ni = ed.q0_gaap_ni_usd if ed.q0_gaap_ni_usd != 0.0 else (st.api_q0_gaap_ni_usd if st.is_api_synced_today else 0.0)
     ttm_ni = q0_ni + st.prior_3q_gaap_ni_usd
@@ -25,7 +25,7 @@ def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDe
 
 def has_index_inclusion_edge(st: IndexCandidateFinancials | None, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False) -> bool:
     if not st or TOXIC_FILING_REGEX.search(raw_text) or ed.is_toxic_or_restatement: return False
-    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25})
+    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6)})
     return evaluate_index_inclusion(st_neutral, ed, raw_text, vacancy_active=vacancy_active) is not None
 
 def build_quant_bridge(st: IndexCandidateFinancials, ed: EarningsReleaseDelta) -> dict:

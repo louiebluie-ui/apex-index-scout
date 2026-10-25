@@ -13,7 +13,7 @@ def test_1_sp600_day0_gaap_flip_passes_and_computes_passive_demand():
     assert r is not None and r["track"] == "SP_600_SMALLCAP_GAAP_FLIP" and r["ttm_gaap_ni_usd"] == 10e6 and r["passive_demand_days"] > 10.0
 
 def test_2_sp400_midcap_band_classification():
-    r = evaluate_index_inclusion(_base_ic(market_cap_usd=9.5e9, ocf_ttm_usd=650e6, addv_20d_usd=45e6), EarningsReleaseDelta(form_type="8-K", q0_gaap_ni_usd=35e6), "Item 2.02")
+    r = evaluate_index_inclusion(_base_ic(market_cap_usd=9.5e9, ocf_ttm_usd=650e6, addv_20d_usd=18e6), EarningsReleaseDelta(form_type="8-K", q0_gaap_ni_usd=35e6), "Item 2.02")
     assert r is not None and r["track"] == "SP_400_MIDCAP_GAAP_FLIP" and r["index_tier"] == "SP_400_MIDCAP"
 
 def test_3_blocks_when_q0_still_insufficient_to_flip_ttm_positive():
