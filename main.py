@@ -19,7 +19,7 @@ if __name__ == "__main__":
         sp1500 = load_sp1500_exclusions(c, fmp_k)
         hits = fetch_earnings_and_vacancy_filings(str(start), str(end), sp1500)
         new_hits = [h for h in hits if h["adsh"] and h["adsh"] not in seen]
-        vacancy_active = any("2.01" in str(h.get("items")) and any(s in sp1500 for s in h.get("symbols", [])) for h in new_hits)
+        vacancy_active = any("2.01" in str(h.get("items")) and any(s in sp1500 for s in h.get("symbols", [])) for h in hits)
         st_cache: dict[str, IndexCandidateFinancials | None] = {}
         for h in new_hits:
             sym, fm, st, fmp_err = h["symbol"], h["form"], None, False
