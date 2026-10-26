@@ -6,24 +6,42 @@ on:
     - cron: '45 21 * * 1-5'
     - cron: '55 13 * * 1-5'
     - cron: '45 22 * * 1-5'
+
 permissions:
   contents: write
+
 jobs:
   index-scout:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: |
+      - name: Auto-DST Pacific Time Gate (5:55 AM & 2:45 PM PT)
+        id: dst_gate
+        run: |
           Z=$(TZ="America/Los_Angeles" date +%Z); C="${{ github.event.schedule }}"
           if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            ([ "$Z" = "PDT" ] && [ "$C" != "55 12 * * 1-5" ] && [ "$C" != "45 21 * * 1-5" ]) && exit 0
-            ([ "$Z" = "PST" ] && [ "$C" != "55 13 * * 1-5" ] && [ "$C" != "45 22 * * 1-5" ]) && exit 0
+            if ([ "$Z" = "PDT" ] && [ "$C" != "55 12 * * 1-5" ] && [ "$C" != "45 21 * * 1-5" ]) || \
+               ([ "$Z" = "PST" ] && [ "$C" != "55 13 * * 1-5" ] && [ "$C" != "45 22 * * 1-5" ]); then
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
-          pytest -q && python3 main.py
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.dst_gate.outputs.should_run == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.dst_gate.outputs.should_run == 'true'
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+        if: steps.dst_gate.outputs.should_run == 'true'
+
+      - run: pytest -q && python3 main.py
+        if: steps.dst_gate.outputs.should_run == 'true'
         env:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -31,7 +49,9 @@ jobs:
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
           ALERT_EMAIL_PW: ${{ secrets.ALERT_EMAIL_PW }}
           ALERT_RECIPIENT: ${{ secrets.ALERT_RECIPIENT }}
+
       - run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add store/ && git diff --staged --quiet || (git commit -m "Update index_scout ledgers" && git pull --rebase --autostash -X theirs origin main && git push)
+          git add store/ && git diff --staged --quiet || (git commit -m "Update index_scout ledgers [skip ci]" && git pull --rebase --autostash -X theirs origin main && git push)
+        if: steps.dst_gate.outputs.should_run == 'true'
