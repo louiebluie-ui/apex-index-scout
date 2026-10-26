@@ -81,11 +81,11 @@ def fetch_filing_text(client: httpx.Client, cik: str | list[str], adsh: str, doc
     return "\n--- EXHIBIT/DOC ---\n".join(parts)[:16000]
 
 def send_index_alert(subject: str, body: str) -> bool:
-    u, pw, to = os.getenv("ALERT_EMAIL", ""), os.getenv("ALERT_EMAIL_PW", ""), os.getenv("ALERT_RECIPIENT", "")
+    u, pw, to = os.getenv("ALERT_EMAIL", ""), os.getenv("ALERT_EMAIL_PW", ""), (os.getenv("ALERT_RECIPIENT") or os.getenv("ALERT_EMAIL", ""))
     if not (u and pw and to): return False
     try:
         msg = EmailMessage(); msg["Subject"] = subject; msg["From"] = u; msg["To"] = to; msg.set_content(body)
-        with smtplib.SMTP_SSL(os.getenv("SMTP_HOST", "smtp.gmail.com"), 465, timeout=15.0) as s:
+        with smtplib.SMTP_SSL((os.getenv("SMTP_HOST") or "smtp.gmail.com").strip(), 465, timeout=15.0) as s:
             s.login(u, pw); s.send_message(msg)
         return True
     except Exception: return False
