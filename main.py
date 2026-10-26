@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from index_scout.contracts import EarningsReleaseDelta, IndexCandidateFinancials
 from index_scout.harvester import fetch_earnings_and_vacancy_filings, fetch_filing_text, load_seen, save_seen, send_index_alert
-from index_scout.ingestor import load_sp1500_exclusions, fetch_index_candidate_financials, extract_earnings_delta
+from index_scout.ingestor import load_sp1500_exclusions, fetch_index_candidate_financials, fetch_insider_cluster, extract_earnings_delta
 from index_scout.inclusion_engine import evaluate_index_inclusion, has_index_inclusion_edge, build_quant_bridge
 
 CAT_P = Path("store/active_index_candidates.json")
@@ -35,6 +35,9 @@ if __name__ == "__main__":
             if not txt: continue
             ed = extract_earnings_delta(c, sym, fm, txt, gem_k, h["entity"], h["file_date"])
             if ed.form_type == "ERROR": continue
+            ins_usd, ins_cnt = fetch_insider_cluster(c, sym, str(end - timedelta(days=30)), fmp_k)
+            if ins_usd > ed.insider_cluster_usd:
+                ed.insider_cluster_usd, ed.insider_buyers_count = ins_usd, max(ed.insider_buyers_count, ins_cnt)
             seen.add(h["adsh"])
             if has_index_inclusion_edge(st, ed, txt, vacancy_active):
                 prev = active.get(sym, {})

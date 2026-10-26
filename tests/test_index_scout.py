@@ -88,3 +88,32 @@ def test_12_quant_bridge_export_matches_apex_quant_engine_schema():
 def test_13_standalone_section16b_csuite_cluster_passes_off_season():
     r = evaluate_index_inclusion(_base_ic(prior_3q_gaap_ni_usd=50e6, prior_4q_gaap_ni_usd=60e6), EarningsReleaseDelta(form_type="FORM-4", insider_cluster_usd=320_000.0, insider_buyers_count=2), "Form 4 P-Purchase")
     assert r is not None and r["track"] == "SECTION_16B_CLUSTER"
+
+from pathlib import Path
+from index_scout.ingestor import fetch_insider_cluster
+
+def test_14_forced_index_deletion_washout_and_sp1500_completeness():
+    # 1. Verify store/sp1500_exclusions.json covers S&P 500 + S&P 400 + S&P 600 (>= 1,350 constituents)
+    sp1500_list = json.loads(Path("store/sp1500_exclusions.json").read_text("utf-8"))
+    assert len(sp1500_list) >= 1350
+
+    # 2. Forced Index Deletion Washout: Day-0 rebalance dump below AVWAP queues in active_index_candidates,
+    #    then triggers SP_600_SMALLCAP_DELETION_WASHOUT once passive selling is absorbed above AVWAP
+    ed_del = EarningsReleaseDelta(form_type="8-K", file_date="2026-10-23", is_index_deletion_washout=True, catalyst_summary="Mechanical S&P 600 deletion washout with 6.8% Owner FCF yield")
+    st_dump = _base_ic(market_cap_usd=1.8e9, ocf_ttm_usd=165e6, capex_ttm_usd=25e6, sbc_ttm_usd=10e6, live_price=29.5, avwap_event=31.0, intraday_ofi=-0.20)
+    assert evaluate_index_inclusion(st_dump, ed_del, "Index deletion") is None
+    assert has_index_inclusion_edge(st_dump, ed_del, "Index deletion") is True
+
+    st_reclaim = st_dump.model_copy(update={"live_price": 31.6, "intraday_ofi": 0.32})
+    r_del = evaluate_index_inclusion(st_reclaim, ed_del, "Index deletion")
+    assert r_del is not None and r_del["track"] == "SP_600_SMALLCAP_DELETION_WASHOUT" and r_del["pf_fcf_yield_pct"] >= 6.5
+
+    # 3. Verify live insider cluster helper aggregates distinct C-suite open-market buyers
+    def mock_ins(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[
+            {"transactionDate": "2026-10-20", "transactionType": "P-Purchase", "securitiesTransacted": 5000, "price": 40.0, "reportingCik": "001"},
+            {"transactionDate": "2026-10-21", "transactionType": "P-Purchase", "securitiesTransacted": 3000, "price": 40.0, "reportingCik": "002"},
+        ])
+    with httpx.Client(transport=httpx.MockTransport(mock_ins)) as c:
+        usd, cnt = fetch_insider_cluster(c, "SMCP", "2026-10-01", "fake_k")
+        assert usd == 320_000.0 and cnt == 2

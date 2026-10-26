@@ -6,17 +6,18 @@ def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDe
     if st.live_price < st.avwap_event or st.intraday_ofi < 0.15: return None
     q0_ni = ed.q0_gaap_ni_usd if ed.q0_gaap_ni_usd != 0.0 else (st.api_q0_gaap_ni_usd if st.is_api_synced_today else 0.0)
     ttm_ni = q0_ni + st.prior_3q_gaap_ni_usd
-    is_flip = st.prior_4q_gaap_ni_usd <= 0.0
-    is_vac = vacancy_active and st.prior_4q_gaap_ni_usd > 0.0 and (ttm_ni / st.market_cap_usd) >= 0.04
-    is_ins = ed.insider_cluster_usd >= 250_000.0 and ed.insider_buyers_count >= 2
-    if not ((q0_ni > 0 and ttm_ni > 0 and (is_flip or is_vac)) or is_ins): return None
     owner_fcf = max(st.ocf_ttm_usd - st.capex_ttm_usd - st.sbc_ttm_usd, ed.q0_operating_cf_usd * 3.0)
     fcf_y = (owner_fcf / max(st.market_cap_usd, 1.0)) * 100.0
     net_debt = max(0.0, st.total_debt_usd - st.cash_usd)
     pf_lev = net_debt / max(owner_fcf, 1.0)
+    is_flip = st.prior_4q_gaap_ni_usd <= 0.0
+    is_vac = vacancy_active and st.prior_4q_gaap_ni_usd > 0.0 and (ttm_ni / st.market_cap_usd) >= 0.04
+    is_ins = ed.insider_cluster_usd >= 250_000.0 and ed.insider_buyers_count >= 2
+    is_del_washout = ed.is_index_deletion_washout and fcf_y >= 6.0 and pf_lev <= 2.50 and st.intraday_ofi >= 0.25
+    if not ((q0_ni > 0 and ttm_ni > 0 and (is_flip or is_vac)) or is_ins or is_del_washout): return None
     if fcf_y < 4.5 or pf_lev > 3.00: return None
     tier = "SP_600_SMALLCAP" if st.market_cap_usd <= 6.8e9 else "SP_400_MIDCAP"
-    track = "SECTION_16B_CLUSTER" if is_ins and not (is_flip or is_vac) else (f"{tier}_GAAP_FLIP" if is_flip else f"{tier}_VACANCY_LEADER")
+    track = f"{tier}_DELETION_WASHOUT" if is_del_washout else ("SECTION_16B_CLUSTER" if is_ins and not (is_flip or is_vac) else (f"{tier}_GAAP_FLIP" if is_flip else f"{tier}_VACANCY_LEADER"))
     idx_wt = 0.115 if tier == "SP_600_SMALLCAP" else 0.095
     passive_days = round((st.market_cap_usd * (st.iwf_float_pct / 100.0) * idx_wt) / max(st.addv_20d_usd, 1.0), 2)
     stop_dist = max(1.65 * st.atr_14, 0.025 * st.live_price)
@@ -25,10 +26,10 @@ def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDe
 
 def has_index_inclusion_edge(st: IndexCandidateFinancials | None, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False) -> bool:
     if not st or TOXIC_FILING_REGEX.search(raw_text) or ed.is_toxic_or_restatement: return False
-    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6), "addv_20d_usd": min(st.addv_20d_usd, 19.9e6)})
+    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6)})
     return evaluate_index_inclusion(st_neutral, ed, raw_text, vacancy_active=vacancy_active) is not None
 
 def build_quant_bridge(st: IndexCandidateFinancials, ed: EarningsReleaseDelta) -> dict:
     owner_fcf = max(st.ocf_ttm_usd - st.capex_ttm_usd - st.sbc_ttm_usd, ed.q0_operating_cf_usd * 3.0)
     nd = max(0.0, st.total_debt_usd - st.cash_usd)
-    return {"symbol": st.symbol, "file_date": ed.file_date, "form_type": ed.form_type, "graduated": st.addv_20d_usd >= 20_000_000 and st.live_price >= 12.0, "bars_count": st.bars_count, "addv_20d_usd": round(st.addv_20d_usd, 2), "avwap_event": round(st.avwap_event, 2), "pf_fcf_usd": round(owner_fcf, 2), "pf_net_debt_usd": round(nd, 2), "adj_mcap_usd": round(st.market_cap_usd, 2)}
+    return {"symbol": st.symbol, "file_date": ed.file_date, "form_type": ed.form_type, "graduated": st.addv_20d_usd >= 20_000_000 and st.live_price >= 12.0, "bars_count": st.bars_count, "addv_20d_usd": round(st.addv_20d_usd, 2), "avwap_event": round(st.avwap_event, 2), "pf_fcf_usd": round(owner_fcf, 2), "pf_net_debt_usd": round(nd, 2), "adj_mcap_usd": round(st.market_cap_usd, 2), "insider_cluster_usd": ed.insider_cluster_usd}

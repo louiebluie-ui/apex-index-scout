@@ -4,7 +4,7 @@ from pathlib import Path
 
 SEC_HDR = {"User-Agent": "ApexIndexScout/1.0 (quant@research.local)"}
 SYM_RE = re.compile(r"\((?!(?:DE|MD|NV|CYM|BVI)\)\s*\(CIK)([A-Z]{1,5})(?:[,\s][^)]*)?\)\s*(?:\(CIK|$)")
-ANCHOR_RE = re.compile(r"(statements?\s+of\s+(?:operations|income|earnings)|gaap\s+net\s+income|net\s+income\s+\(loss\)|continuing\s+operations|diluted\s+(?:earnings|net\s+income)|operating\s+activities|item\s+2\.0[12])", re.I)
+ANCHOR_RE = re.compile(r"(statements?\s+of\s+(?:operations|income|earnings)|gaap\s+net\s+income|net\s+income\s+\(loss\)|continuing\s+operations|diluted\s+(?:earnings|net\s+income)|operating\s+activities|item\s+2\.0[12]|s&p\s+(?:500|midcap|smallcap|600|400)|russell\s+2000|index\s+(?:deletion|removal|rebalance|reconstitution))", re.I)
 SEEN_P = Path("store/seen_filings.json")
 
 def load_seen() -> set[str]:
@@ -18,7 +18,7 @@ def save_seen(seen: set[str]) -> None:
 def fetch_earnings_and_vacancy_filings(start_dt: str, end_dt: str, sp1500_ex: set[str] | None = None) -> list[dict]:
     by_adsh: dict[str, dict] = {}
     ex = sp1500_ex or set()
-    qs = [("8-K,8-K/A", "%22Item+2.02%22+OR+%22Item+2.01%22"), ("10-Q,10-K", "%22Net+Income%22+AND+%22Operating+Activities%22")]
+    qs = [("8-K,8-K/A", "%22Item+2.02%22+OR+%22Item+2.01%22+OR+%22S%26P+SmallCap%22+OR+%22Russell+2000%22"), ("10-Q,10-K", "%22Net+Income%22+AND+%22Operating+Activities%22")]
     with httpx.Client(timeout=15.0, headers=SEC_HDR) as c:
         for forms, q in qs:
             for pg in range(4):

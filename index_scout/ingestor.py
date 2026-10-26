@@ -11,15 +11,32 @@ def load_sp1500_exclusions(client: httpx.Client, fmp_key: str) -> set[str]:
     try:
         if SP1500_P.exists(): cached = set(json.loads(SP1500_P.read_text()))
     except Exception: pass
-    if len(cached) >= 400 or not fmp_key: return cached
-    try:
-        r = client.get(f"{FMP_BASE}/sp500-constituent?apikey={fmp_key}")
-        if r.status_code == 200 and isinstance(r.json(), list):
-            for x in r.json():
-                if x.get("symbol"): cached.add(str(x["symbol"]).upper())
-        if cached: SP1500_P.write_text(json.dumps(sorted(list(cached))))
-    except Exception: pass
+    if len(cached) >= 1350 or not fmp_key: return cached
+    for ep in ("sp500-constituent", "sp400-constituent", "sp600-constituent", "etf-holder?symbol=IJH", "etf-holder?symbol=IJR"):
+        try:
+            sep = "&" if "?" in ep else "?"
+            r = client.get(f"{FMP_BASE}/{ep}{sep}apikey={fmp_key}")
+            if r.status_code == 200 and isinstance(r.json(), list):
+                for x in r.json():
+                    sym = str(x.get("symbol") or x.get("asset") or "").strip().upper()
+                    if sym and re.fullmatch(r"[A-Z]{1,5}(?:-[A-Z])?", sym): cached.add(sym)
+        except Exception: pass
+    if cached:
+        SP1500_P.parent.mkdir(parents=True, exist_ok=True)
+        SP1500_P.write_text(json.dumps(sorted(list(cached))))
     return cached
+
+def fetch_insider_cluster(client: httpx.Client, sym: str, min_dt: str, fmp_key: str) -> tuple[float, int]:
+    if not fmp_key or not sym: return 0.0, 0
+    try:
+        r = client.get(f"{FMP_BASE}/insider-trading?symbol={sym}&limit=35&apikey={fmp_key}")
+        rows = r.json() if r.status_code == 200 and isinstance(r.json(), list) else []
+        buys = [x for x in rows if str(x.get("transactionDate", "")) >= min_dt and str(x.get("transactionType", "")).upper().startswith("P") and float(x.get("securitiesTransacted") or 0) * float(x.get("price") or 0) > 0]
+        usd = sum(float(x.get("securitiesTransacted") or 0) * float(x.get("price") or 0) for x in buys)
+        buyers = len({str(x.get("reportingCik") or x.get("reportingName") or i) for i, x in enumerate(buys)})
+        return round(usd, 2), buyers
+    except Exception:
+        return 0.0, 0
 
 def fetch_index_candidate_financials(client: httpx.Client, sym: str, file_dt: str, fmp_key: str, sp1500_ex: set[str] | None = None) -> IndexCandidateFinancials | None:
     if not fmp_key or not sym or (sp1500_ex and sym in sp1500_ex): return None
@@ -103,7 +120,8 @@ def extract_earnings_delta(c: httpx.Client, sym: str, form: str, raw_text: str, 
         "(2) Extract q0_operating_cf_usd: single-quarter GAAP Operating Cash Flow if disclosed. "
         "(3) Set has_discontinued_ops_loss=true if continuing operations was only positive due to a one-time tax benefit or discontinued ops. "
         "(4) Set is_merger_closing_vacancy=true if Item 2.01 announces completion of an acquisition/merger of a public company. "
-        "Return strict JSON: q0_gaap_ni_usd, q0_operating_cf_usd, has_discontinued_ops_loss (bool), is_merger_closing_vacancy (bool), is_toxic_or_restatement (bool), catalyst_summary (1-sentence str).\n\nTEXT:\n"
+        "(5) Set is_index_deletion_washout=true if the filing or release notes removal/deletion/down-tiering from an S&P or Russell index despite positive cash flow. "
+        "Return strict JSON: q0_gaap_ni_usd, q0_operating_cf_usd, has_discontinued_ops_loss (bool), is_merger_closing_vacancy (bool), is_index_deletion_washout (bool), is_toxic_or_restatement (bool), catalyst_summary (1-sentence str).\n\nTEXT:\n"
         + blind_txt[:14500]
     )
     u = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gem_key}"
