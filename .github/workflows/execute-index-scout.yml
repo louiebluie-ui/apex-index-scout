@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: '55 12 * * 1-5'
     - cron: '45 21 * * 1-5'
+    - cron: '55 13 * * 1-5'
+    - cron: '45 22 * * 1-5'
 permissions:
   contents: write
 jobs:
