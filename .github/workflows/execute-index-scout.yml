@@ -17,7 +17,13 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: pytest -q && python3 main.py
+      - run: |
+          Z=$(TZ="America/Los_Angeles" date +%Z); C="${{ github.event.schedule }}"
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            ([ "$Z" = "PDT" ] && [ "$C" != "55 12 * * 1-5" ] && [ "$C" != "45 21 * * 1-5" ]) && exit 0
+            ([ "$Z" = "PST" ] && [ "$C" != "55 13 * * 1-5" ] && [ "$C" != "45 22 * * 1-5" ]) && exit 0
+          fi
+          pytest -q && python3 main.py
         env:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
