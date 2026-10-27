@@ -3,10 +3,8 @@ name: Execute Index Scout
 on:
   workflow_dispatch:
   schedule:
-    - cron: '22 13 * * 1-5'
-    - cron: '18 21 * * 1-5'
-    - cron: '22 14 * * 1-5'
-    - cron: '18 22 * * 1-5'
+    - cron: "22 13 * * 1-5"
+    - cron: "18 21 * * 1-5"
 
 permissions:
   contents: write
@@ -19,14 +17,8 @@ jobs:
       - name: Auto-DST Pacific Time Gate (5:55 AM & 2:45 PM PT)
         id: dst_gate
         run: |
-          Z=$(TZ="America/Los_Angeles" date +%Z); C="${{ github.event.schedule }}"
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            if ([ "$Z" = "PDT" ] && [ "$C" != "22 13 * * 1-5" ] && [ "$C" != "18 21 * * 1-5" ]) || \
-               ([ "$Z" = "PST" ] && [ "$C" != "22 14 * * 1-5" ] && [ "$C" != "18 22 * * 1-5" ]); then
-              echo "should_run=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
+          NY_DT=$(TZ="America/New_York" date +%Y-%m-%d)
+          case "$NY_DT" in 2026-11-26|2026-12-25|2027-01-01|2027-01-18|2027-02-15) echo "should_run=false" >> "$GITHUB_OUTPUT"; exit 0;; esac
           echo "should_run=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
