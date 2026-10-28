@@ -1,5 +1,6 @@
 import json, os, sys, httpx
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from dotenv import load_dotenv
 from index_scout.contracts import EarningsReleaseDelta, IndexCandidateFinancials
@@ -13,12 +14,17 @@ if __name__ == "__main__":
     load_dotenv(".env", override=True)
     fmp_k, gem_k = os.getenv("FMP_API_KEY", "").strip(), os.getenv("GEMINI_API_KEY", "").strip()
     if not (fmp_k and gem_k): sys.exit("[INDEX SCOUT ABORT] Missing API keys.")
+    now_pt = datetime.now(ZoneInfo("America/Los_Angeles"))
+    is_rth = (390 <= (now_pt.hour * 60 + now_pt.minute) <= 785)
     end = date.today(); start = end - timedelta(days=5); seen = load_seen()
     active: dict[str, dict] = json.loads(CAT_P.read_text()) if CAT_P.exists() else {}
     with httpx.Client(timeout=15.0) as c:
         sp1500 = load_sp1500_exclusions(c, fmp_k)
         hits = fetch_earnings_and_vacancy_filings(str(start), str(end), sp1500)
         new_hits = [h for h in hits if h["adsh"] and h["adsh"] not in seen]
+        if not new_hits and not is_rth:
+            print(f"[INDEX SCOUT FAST-EXIT] New=0 outside RTH | ActiveQueue={len(active)}")
+            sys.exit(0)
         vacancy_active = any("2.01" in str(h.get("items")) and any(s in sp1500 for s in h.get("symbols", [])) for h in hits)
         st_cache: dict[str, IndexCandidateFinancials | None] = {}
         for h in new_hits:
@@ -48,7 +54,7 @@ if __name__ == "__main__":
             ed = EarningsReleaseDelta(**item["ed"])
             if ed.file_date and (end - date.fromisoformat(ed.file_date)).days > 60:
                 del active[sym]; continue
-            st = fetch_index_candidate_financials(c, sym, ed.file_date or str(start), fmp_k, sp1500)
+            st = st_cache.get(sym) or fetch_index_candidate_financials(c, sym, ed.file_date or str(start), fmp_k, sp1500)
             if not st: continue
             item["quant_bridge"] = build_quant_bridge(st, ed)
             if item.get("alerted"): continue

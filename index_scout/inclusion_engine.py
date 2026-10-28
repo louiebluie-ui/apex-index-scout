@@ -3,7 +3,7 @@ from index_scout.contracts import IndexCandidateFinancials, EarningsReleaseDelta
 def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False, equity: float = 94596.0) -> dict | None:
     if TOXIC_FILING_REGEX.search(raw_text) or ed.is_toxic_or_restatement or ed.has_discontinued_ops_loss: return None
     if not (1.0e9 <= st.market_cap_usd <= 20.5e9 and st.iwf_float_pct >= 50.0 and st.falr_ratio >= 0.75 and st.live_price >= 10.0 and 4.0e6 <= st.addv_20d_usd < 20.0e6 and st.bars_count >= 60): return None
-    if st.live_price < st.avwap_event or st.intraday_ofi < 0.15: return None
+    if st.live_price < st.avwap_event or st.live_price > st.avwap_event * 1.08 or st.intraday_ofi < 0.15: return None
     q0_ni = ed.q0_gaap_ni_usd if ed.q0_gaap_ni_usd != 0.0 else (st.api_q0_gaap_ni_usd if st.is_api_synced_today else 0.0)
     ttm_ni = q0_ni + st.prior_3q_gaap_ni_usd
     owner_fcf = max(st.ocf_ttm_usd - st.capex_ttm_usd - st.sbc_ttm_usd, ed.q0_operating_cf_usd * 3.0)
@@ -21,12 +21,14 @@ def evaluate_index_inclusion(st: IndexCandidateFinancials, ed: EarningsReleaseDe
     idx_wt = 0.115 if tier == "SP_600_SMALLCAP" else 0.095
     passive_days = round((st.market_cap_usd * (st.iwf_float_pct / 100.0) * idx_wt) / max(st.addv_20d_usd, 1.0), 2)
     stop_dist = max(1.65 * st.atr_14, 0.025 * st.live_price)
+    if stop_dist / st.live_price > 0.08: return None
     alloc_usd = min(0.085 * equity, (0.0045 * equity) / (stop_dist / st.live_price), 0.0020 * st.addv_20d_usd)
-    return {"symbol": st.symbol, "track": track, "index_tier": tier, "q0_gaap_ni_usd": round(q0_ni, 2), "ttm_gaap_ni_usd": round(ttm_ni, 2), "prior_4q_gaap_ni_usd": round(st.prior_4q_gaap_ni_usd, 2), "pf_fcf_yield_pct": round(fcf_y, 2), "pf_net_debt_y": round(pf_lev, 2), "falr_ratio": round(st.falr_ratio, 2), "passive_demand_days": passive_days, "limit_buy_px": round(st.live_price, 2), "wick_buy_px": round(st.live_price - 0.45 * st.atr_14, 2), "hard_stop_px": round(st.live_price - stop_dist, 2), "target_s1_px": round(st.live_price + 2.0 * stop_dist, 2), "alloc_usd": round(alloc_usd, 2), "shares": int(alloc_usd // st.live_price)}
+    limit_px = round(min(st.live_price, st.avwap_event * 1.035), 2)
+    return {"symbol": st.symbol, "track": track, "index_tier": tier, "q0_gaap_ni_usd": round(q0_ni, 2), "ttm_gaap_ni_usd": round(ttm_ni, 2), "prior_4q_gaap_ni_usd": round(st.prior_4q_gaap_ni_usd, 2), "pf_fcf_yield_pct": round(fcf_y, 2), "pf_net_debt_y": round(pf_lev, 2), "falr_ratio": round(st.falr_ratio, 2), "passive_demand_days": passive_days, "live_px": round(st.live_price, 2), "limit_buy_px": limit_px, "wick_buy_px": round(st.live_price - 0.45 * st.atr_14, 2), "hard_stop_px": round(st.live_price - stop_dist, 2), "target_s1_px": round(st.live_price + 2.0 * stop_dist, 2), "alloc_usd": round(alloc_usd, 2), "shares": int(alloc_usd // limit_px)}
 
 def has_index_inclusion_edge(st: IndexCandidateFinancials | None, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False) -> bool:
     if not st or TOXIC_FILING_REGEX.search(raw_text) or ed.is_toxic_or_restatement: return False
-    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6)})
+    st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6), "atr_14": min(st.atr_14, 0.04 * st.live_price)})
     return evaluate_index_inclusion(st_neutral, ed, raw_text, vacancy_active=vacancy_active) is not None
 
 def build_quant_bridge(st: IndexCandidateFinancials, ed: EarningsReleaseDelta) -> dict:

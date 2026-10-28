@@ -76,8 +76,10 @@ def _hydrate_bars_and_statements(c: httpx.Client, sym: str, file_dt: str, mcap: 
     addv = sum(float(b.get("close", 0)) * float(b.get("volume", 0)) for b in rec) / 20.0
     falr = round((addv * 252.0) / max(mcap * (iwf / 100.0), 1.0), 3)
     if addv < 4.0e6 or falr < 0.75: return None
-    b0 = bars[-1]; live_px = float(b0.get("close") or px)
-    hi, lo = float(b0.get("high") or live_px), float(b0.get("low") or live_px)
+    b0 = bars[-1]; eod_px = float(b0.get("close") or px)
+    live_px = px if (px > 0 and abs(px - eod_px) / max(eod_px, 1.0) <= 0.65) else eod_px
+    hi = max(float(b0.get("high") or live_px), live_px)
+    lo = min(float(b0.get("low") or live_px), live_px)
     ofi = ((live_px - lo) - (hi - live_px)) / max(hi - lo, 0.01)
     trs = [max(float(bars[i].get("high", 0)) - float(bars[i].get("low", 0)), abs(float(bars[i].get("high", 0)) - float(bars[i-1].get("close", 0))), abs(float(bars[i].get("low", 0)) - float(bars[i-1].get("close", 0))), 0.01) for i in range(n - 14, n)]
     atr = sum(trs) / 14.0
@@ -106,6 +108,7 @@ def redact_entity(text: str, sym: str, entity_name: str = "") -> str:
         core = re.sub(r"(\s*\([^)]*\)|\s*/[A-Za-z]{2,4}/)", "", part)
         core = re.sub(r"[,\.]?\s*\b(INC|CORP|CORPORATION|LLC|LTD|PLC|LP|L\.P\.|HOLDINGS|BRANDS|GROUP|CO|COMPANY|TRUST)\b[\.,]*", "", core, flags=re.I).strip()
         if len(core) > 2: out = re.sub(re.escape(core), "[ENTITY_OMEGA]", out, flags=re.I)
+    out = re.sub(r"\b[A-Z][A-Za-z0-9&\-]{1,25}(?:\s+[A-Z][A-Za-z0-9&\-]{1,25}){0,3}\s+(?:Corp\.?|Corporation|Inc\.?|LLC|Ltd\.?|PLC|L\.P\.|Holdings)\b", "[ENTITY_OMEGA]", out)
     return out
 
 def _norm_signed_usd(val: float) -> float:
@@ -124,19 +127,27 @@ def extract_earnings_delta(c: httpx.Client, sym: str, form: str, raw_text: str, 
         "Return strict JSON: q0_gaap_ni_usd, q0_operating_cf_usd, has_discontinued_ops_loss (bool), is_merger_closing_vacancy (bool), is_index_deletion_washout (bool), is_toxic_or_restatement (bool), catalyst_summary (1-sentence str).\n\nTEXT:\n"
         + blind_txt[:14500]
     )
-    u = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gem_key}"
-    pld = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.0, "responseMimeType": "application/json"}}
-    try:
-        r = c.post(u, json=pld, timeout=20.0)
-        if r.status_code != 200: raise RuntimeError(f"Gemini HTTP {r.status_code}")
-        raw_s = re.sub(r"^```(?:json)?|```$", "", r.json()["candidates"][0]["content"]["parts"][0]["text"].strip(), flags=re.I).strip()
-        raw_d = json.loads(raw_s)
-        if isinstance(raw_d, list): raw_d = raw_d[0] if raw_d else {}
-        d = {k: v for k, v in raw_d.items() if v is not None}
-        for k in ("q0_gaap_ni_usd", "q0_operating_cf_usd"):
-            if k in d:
-                if isinstance(d[k], str): d[k] = re.sub(r"[,$\s]", "", d[k].replace("(", "-").replace(")", "")) or 0.0
-                d[k] = _norm_signed_usd(float(d[k] or 0.0))
-        return EarningsReleaseDelta(form_type=form, file_date=file_dt, **d)
-    except Exception:
-        return EarningsReleaseDelta(form_type="ERROR", file_date=file_dt)
+    models = [
+        ("gemini-4-argon", {"responseMimeType": "application/json", "maxOutputTokens": 32768, "thinkingConfig": {"thinkingLevel": "low"}}, 45.0),
+        ("gemini-2.5-flash", {"temperature": 0.0, "responseMimeType": "application/json"}, 20.0),
+    ]
+    for m_name, gen_cfg, t_out in models:
+        u = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={gem_key}"
+        pld = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
+        try:
+            r = c.post(u, json=pld, timeout=t_out)
+            if r.status_code != 200: continue
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            txt_out = next((p["text"] for p in reversed(parts) if "text" in p and not p.get("thought")), parts[-1].get("text", ""))
+            raw_s = re.sub(r"^```(?:json)?|```$", "", txt_out.strip(), flags=re.I).strip()
+            raw_d = json.loads(raw_s)
+            if isinstance(raw_d, list): raw_d = raw_d[0] if raw_d else {}
+            d = {k: v for k, v in raw_d.items() if v is not None}
+            for k in ("q0_gaap_ni_usd", "q0_operating_cf_usd"):
+                if k in d:
+                    if isinstance(d[k], str): d[k] = re.sub(r"[,$\s]", "", d[k].replace("(", "-").replace(")", "")) or 0.0
+                    d[k] = _norm_signed_usd(float(d[k] or 0.0))
+            return EarningsReleaseDelta(form_type=form, file_date=file_dt, **d)
+        except Exception:
+            continue
+    return EarningsReleaseDelta(form_type="ERROR", file_date=file_dt)
