@@ -6,6 +6,24 @@ from index_scout.contracts import IndexCandidateFinancials, EarningsReleaseDelta
 FMP_BASE = "https://financialmodelingprep.com/stable"
 SP1500_P = Path("store/sp1500_exclusions.json")
 
+GEMINI_INDEX_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "q0_gaap_ni_usd": {"type": "NUMBER"},
+        "q0_operating_cf_usd": {"type": "NUMBER"},
+        "has_discontinued_ops_loss": {"type": "BOOLEAN"},
+        "is_merger_closing_vacancy": {"type": "BOOLEAN"},
+        "is_index_deletion_washout": {"type": "BOOLEAN"},
+        "is_toxic_or_restatement": {"type": "BOOLEAN"},
+        "catalyst_summary": {"type": "STRING"},
+    },
+    "required": [
+        "q0_gaap_ni_usd", "q0_operating_cf_usd", "has_discontinued_ops_loss",
+        "is_merger_closing_vacancy", "is_index_deletion_washout",
+        "is_toxic_or_restatement", "catalyst_summary"
+    ],
+}
+
 def load_sp1500_exclusions(client: httpx.Client, fmp_key: str) -> set[str]:
     cached: set[str] = set()
     try:
@@ -77,13 +95,34 @@ def _hydrate_bars_and_statements(c: httpx.Client, sym: str, file_dt: str, mcap: 
     falr = round((addv * 252.0) / max(mcap * (iwf / 100.0), 1.0), 3)
     if addv < 4.0e6 or falr < 0.75: return None
     b0 = bars[-1]; eod_px = float(b0.get("close") or px)
+    b0_dt = str(b0.get("date", ""))[:10]
     live_px = px if (px > 0 and abs(px - eod_px) / max(eod_px, 1.0) <= 0.65) else eod_px
     hi = max(float(b0.get("high") or live_px), live_px)
     lo = min(float(b0.get("low") or live_px), live_px)
     ofi = ((live_px - lo) - (hi - live_px)) / max(hi - lo, 0.01)
+    if file_dt and b0_dt and file_dt > b0_dt and live_px >= eod_px * 0.995:
+        ofi = max(ofi, 0.20)
+    if ofi < 0.15:
+        try:
+            ir = c.get(f"{FMP_BASE}/historical-chart/5min?symbol={sym}&apikey={key}")
+            ij = ir.json() if ir.status_code == 200 else None
+            if isinstance(ij, list) and len(ij) >= 2:
+                w5 = ij[:6]
+                c5 = float(w5[0].get("close") or live_px)
+                h5 = max(float(x.get("high") or c5) for x in w5)
+                l5 = min(float(x.get("low") or c5) for x in w5)
+                ofi = max(ofi, ((c5 - l5) - (h5 - c5)) / max(h5 - l5, 0.01))
+        except Exception:
+            pass
     trs = [max(float(bars[i].get("high", 0)) - float(bars[i].get("low", 0)), abs(float(bars[i].get("high", 0)) - float(bars[i-1].get("close", 0))), abs(float(bars[i].get("low", 0)) - float(bars[i-1].get("close", 0))), 0.01) for i in range(n - 14, n)]
     atr = sum(trs) / 14.0
-    ev = [b for b in bars if str(b.get("date", "")) >= file_dt] or bars[-1:]
+    post_ev = [b for b in bars if file_dt and str(b.get("date", "")) >= file_dt]
+    if post_ev:
+        d0 = post_ev[0]
+        d0_tp = (float(d0.get("high", 0)) + float(d0.get("low", 0)) + float(d0.get("close", 0))) / 3.0
+        ev = [b for b in post_ev if d0_tp <= 0 or ((float(b.get("high", 0)) + float(b.get("low", 0)) + float(b.get("close", 0))) / 3.0) <= d0_tp * 1.15] or [d0]
+    else:
+        ev = bars[-1:]
     ev_v = sum(float(b.get("volume") or 0) for b in ev)
     avw = (sum(((float(b.get("high",0))+float(b.get("low",0))+float(b.get("close",0)))/3.0)*float(b.get("volume",0)) for b in ev) / ev_v) if ev_v > 0 else live_px
     def _j(ep: str) -> list:
@@ -109,6 +148,8 @@ def redact_entity(text: str, sym: str, entity_name: str = "") -> str:
         core = re.sub(r"[,\.]?\s*\b(INC|CORP|CORPORATION|LLC|LTD|PLC|LP|L\.P\.|HOLDINGS|BRANDS|GROUP|CO|COMPANY|TRUST)\b[\.,]*", "", core, flags=re.I).strip()
         if len(core) > 2: out = re.sub(re.escape(core), "[ENTITY_OMEGA]", out, flags=re.I)
     out = re.sub(r"\b[A-Z][A-Za-z0-9&\-]{1,25}(?:\s+[A-Z][A-Za-z0-9&\-]{1,25}){0,3}\s+(?:Corp\.?|Corporation|Inc\.?|LLC|Ltd\.?|PLC|L\.P\.|Holdings)\b", "[ENTITY_OMEGA]", out)
+    out = re.sub(r"\b(?:Limassol|Cyprus|Cayman\s+Islands|Marshall\s+Islands|British\s+Virgin\s+Islands|Bermuda)\b", "[JURISDICTION_REDACTED]", out, flags=re.I)
+    out = re.sub(r"\b(?:Mr\.|Ms\.|Mrs\.|Dr\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b", "[INSIDER_REDACTED]", out)
     return out
 
 def _norm_signed_usd(val: float) -> float:
@@ -118,7 +159,7 @@ def extract_earnings_delta(c: httpx.Client, sym: str, form: str, raw_text: str, 
     if not gem_key or not raw_text: return EarningsReleaseDelta(form_type=form, file_date=file_dt)
     blind_txt = redact_entity(raw_text, sym, entity_name)
     prompt = (
-        f"Audit this blinded SEC {form} filing for [ENTITY_OMEGA]. Convert dollar totals to full raw USD ($18.5M = 18500000.0, -$4.2M = -4200000.0). "
+        f"Audit this blinded SEC {form} filing for [ENTITY_OMEGA]. NULL-HYPOTHESIS RULE: Default all numeric fields to 0.0 and booleans to false unless an explicit, audited GAAP figure is stated verbatim. Convert dollar totals to full raw USD ($18.5M = 18500000.0, -$4.2M = -4200000.0). "
         "CRITICAL RULES: (1) Extract q0_gaap_ni_usd: most recent single quarter (Three Months Ended) GAAP Net Income attributable to common stockholders from continuing operations (NEVER use Non-GAAP/Adjusted Net Income or Adjusted EBITDA, and NEVER use 6-month/9-month/12-month YTD totals). "
         "(2) Extract q0_operating_cf_usd: single-quarter GAAP Operating Cash Flow if disclosed. "
         "(3) Set has_discontinued_ops_loss=true if continuing operations was only positive due to a one-time tax benefit or discontinued ops. "
@@ -128,8 +169,8 @@ def extract_earnings_delta(c: httpx.Client, sym: str, form: str, raw_text: str, 
         + blind_txt[:14500]
     )
     models = [
-        ("gemini-4-argon", {"responseMimeType": "application/json", "maxOutputTokens": 32768, "thinkingConfig": {"thinkingLevel": "low"}}, 45.0),
-        ("gemini-2.5-flash", {"temperature": 0.0, "responseMimeType": "application/json"}, 20.0),
+        ("gemini-4-argon", {"responseMimeType": "application/json", "responseSchema": GEMINI_INDEX_SCHEMA, "maxOutputTokens": 65536, "thinkingConfig": {"thinkingLevel": "high"}}, 120.0),
+        ("gemini-2.5-flash", {"temperature": 0.0, "responseMimeType": "application/json", "responseSchema": GEMINI_INDEX_SCHEMA}, 25.0),
     ]
     for m_name, gen_cfg, t_out in models:
         u = f"https://generativelanguage.googleapis.com/v1beta/models/{m_name}:generateContent?key={gem_key}"
@@ -147,7 +188,9 @@ def extract_earnings_delta(c: httpx.Client, sym: str, form: str, raw_text: str, 
                 if k in d:
                     if isinstance(d[k], str): d[k] = re.sub(r"[,$\s]", "", d[k].replace("(", "-").replace(")", "")) or 0.0
                     d[k] = _norm_signed_usd(float(d[k] or 0.0))
-            return EarningsReleaseDelta(form_type=form, file_date=file_dt, **d)
+            allowed = {"form_type", "file_date", "q0_gaap_ni_usd", "q0_operating_cf_usd", "insider_cluster_usd", "insider_buyers_count", "has_discontinued_ops_loss", "is_merger_closing_vacancy", "is_index_deletion_washout", "is_toxic_or_restatement", "catalyst_summary"}
+            clean_d = {k: v for k, v in d.items() if k in allowed}
+            return EarningsReleaseDelta(form_type=form, file_date=file_dt, **clean_d)
         except Exception:
             continue
     return EarningsReleaseDelta(form_type="ERROR", file_date=file_dt)

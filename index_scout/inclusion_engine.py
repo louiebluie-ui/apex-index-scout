@@ -31,6 +31,25 @@ def has_index_inclusion_edge(st: IndexCandidateFinancials | None, ed: EarningsRe
     st_neutral = st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6), "atr_14": min(st.atr_14, 0.04 * st.live_price)})
     return evaluate_index_inclusion(st_neutral, ed, raw_text, vacancy_active=vacancy_active) is not None
 
+def build_early_index_brief(st: IndexCandidateFinancials | None, ed: EarningsReleaseDelta, raw_text: str, vacancy_active: bool = False, sym: str = "") -> dict:
+    if not st:
+        return {"symbol": sym or "PENDING", "track": "INDEX_INCLUSION_WATCH", "form_type": ed.form_type, "file_date": ed.file_date, "q0_gaap_ni_usd": ed.q0_gaap_ni_usd, "status": "AWAITING_MARKET_DATA", "summary": ed.catalyst_summary}
+    sim = evaluate_index_inclusion(st.model_copy(update={"avwap_event": st.live_price, "intraday_ofi": 0.25, "addv_20d_usd": min(st.addv_20d_usd, 19.9e6), "atr_14": min(st.atr_14, 0.04 * st.live_price)}), ed, raw_text, vacancy_active=vacancy_active) or {}
+    min_ofi = 0.25 if ed.is_index_deletion_washout else 0.15
+    reasons = []
+    if st.live_price < st.avwap_event: reasons.append(f"BELOW_AVWAP ({st.live_price:.2f} < {st.avwap_event:.2f})")
+    if st.live_price > st.avwap_event * 1.08: reasons.append(f"EXTENDED_ABOVE_AVWAP ({st.live_price:.2f} > {st.avwap_event * 1.08:.2f})")
+    if st.intraday_ofi < min_ofi: reasons.append(f"WEAK_OFI ({st.intraday_ofi:.2f} < {min_ofi:.2f})")
+    return {
+        "symbol": st.symbol, "track": sim.get("track", "INDEX_INCLUSION_WATCH"), "index_tier": sim.get("index_tier", "SP_600_SMALLCAP"),
+        "form_type": ed.form_type, "file_date": ed.file_date, "live_px": round(st.live_price, 2),
+        "avwap_anchor_px": round(st.avwap_event, 2), "max_chase_px": round(st.avwap_event * 1.08, 2),
+        "intraday_ofi": round(st.intraday_ofi, 2), "q0_gaap_ni_usd": sim.get("q0_gaap_ni_usd", ed.q0_gaap_ni_usd),
+        "ttm_gaap_ni_usd": sim.get("ttm_gaap_ni_usd", 0.0), "pf_fcf_yield_pct": sim.get("pf_fcf_yield_pct", 0.0),
+        "pf_net_debt_y": sim.get("pf_net_debt_y", 0.0), "passive_demand_days": sim.get("passive_demand_days", 0.0),
+        "status": "READY_FOR_EXECUTION" if not reasons else " | ".join(reasons), "summary": ed.catalyst_summary
+    }
+
 def build_quant_bridge(st: IndexCandidateFinancials, ed: EarningsReleaseDelta) -> dict:
     owner_fcf = max(st.ocf_ttm_usd - st.capex_ttm_usd - st.sbc_ttm_usd, ed.q0_operating_cf_usd * 3.0)
     nd = max(0.0, st.total_debt_usd - st.cash_usd)

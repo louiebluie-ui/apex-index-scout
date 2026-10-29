@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from index_scout.contracts import EarningsReleaseDelta, IndexCandidateFinancials
 from index_scout.harvester import fetch_earnings_and_vacancy_filings, fetch_filing_text, load_seen, save_seen, send_index_alert
 from index_scout.ingestor import load_sp1500_exclusions, fetch_index_candidate_financials, fetch_insider_cluster, extract_earnings_delta
-from index_scout.inclusion_engine import evaluate_index_inclusion, has_index_inclusion_edge, build_quant_bridge
+from index_scout.inclusion_engine import evaluate_index_inclusion, has_index_inclusion_edge, build_early_index_brief, build_quant_bridge
 
 CAT_P = Path("store/active_index_candidates.json")
 
@@ -48,8 +48,8 @@ if __name__ == "__main__":
             if has_index_inclusion_edge(st, ed, txt, vacancy_active):
                 prev = active.get(sym, {})
                 if not prev.get("alerted"):
-                    active[sym] = {"ed": ed.model_dump(), "raw_snippet": txt[:2000], "alerted": False}
-        passed = []
+                    active[sym] = {"ed": ed.model_dump(), "raw_snippet": txt[:2000], "early_alerted": prev.get("early_alerted", False), "alerted": False}
+        passed, early_notified = [], []
         for sym, item in list(active.items()):
             ed = EarningsReleaseDelta(**item["ed"])
             if ed.file_date and (end - date.fromisoformat(ed.file_date)).days > 60:
@@ -60,7 +60,11 @@ if __name__ == "__main__":
             if item.get("alerted"): continue
             res = evaluate_index_inclusion(st, ed, item.get("raw_snippet", ""), vacancy_active)
             if res:
-                res["summary"] = ed.catalyst_summary; item["alerted"] = True; passed.append(res)
+                res["summary"] = ed.catalyst_summary; item["alerted"] = True; item["early_alerted"] = True; passed.append(res)
                 send_index_alert(f"[INDEX SCOUT BUY] {sym} ({res['track']})", json.dumps(res, indent=2))
+            elif not item.get("early_alerted"):
+                brief = build_early_index_brief(st, ed, item.get("raw_snippet", ""), vacancy_active=vacancy_active, sym=sym)
+                send_index_alert(f"[INDEX EARLY CATALYST] {sym} ({brief['track']})", json.dumps(brief, indent=2))
+                item["early_alerted"] = True; early_notified.append(sym)
     save_seen(seen); CAT_P.write_text(json.dumps(active, indent=2))
-    print(f"[INDEX SCOUT] New={len(new_hits)} | ActiveQueue={len(active)} | Triggered={len(passed)}")
+    print(f"[INDEX SCOUT] New={len(new_hits)} | ActiveQueue={len(active)} | EarlyWatch={len(early_notified)} | Triggered={len(passed)}")
