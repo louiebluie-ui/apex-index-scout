@@ -1,7 +1,5 @@
 name: Execute Index Scout
 on:
-  schedule:
-    - cron: "10 13,16,19,21 * * 1-5"
   workflow_dispatch:
 
 permissions:
